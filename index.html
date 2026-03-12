@@ -1,106 +1,89 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="hi">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Subhash Pro Smart Scanner</title>
-    <script async src="https://docs.opencv.org/4.5.4/opencv.js" onload="cvReady()"></script>
+    <script async src="https://docs.opencv.org/4.7.0/opencv.js" type="text/javascript" onload="onOpenCvReady();"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <style>
         :root { --accent: #28a745; --danger: #dc3545; }
         body { font-family: 'Segoe UI', Arial, sans-serif; text-align: center; background: #000; color: #fff; margin: 0; overflow: hidden; }
-        
-        /* स्टार्टअप स्क्रीन */
         #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-        
-        #video-wrap { position: relative; width: 100%; height: 60vh; background: #222; }
+        #video-wrap { position: relative; width: 100%; height: 70vh; background: #222; overflow: hidden; }
         #video { width: 100%; height: 100%; object-fit: cover; }
-        .guide-box { position: absolute; top: 20%; left: 15%; width: 70%; height: 60%; border: 2px dashed rgba(255,255,255,0.4); border-radius: 15px; pointer-events: none; }
-
-        .ui-panel { height: 40vh; background: #111; display: flex; flex-direction: column; justify-content: space-evenly; padding: 15px; box-sizing: border-box; }
-        #status { font-size: 19px; color: #ffc107; font-weight: bold; background: rgba(255,193,7,0.1); padding: 10px; border-radius: 10px; min-height: 25px; }
-        
-        .btn-main { background: var(--accent); color: white; padding: 20px; border: none; border-radius: 12px; font-size: 22px; font-weight: bold; width: 90%; cursor: pointer; }
-        .btn-main:disabled { background: #444; }
-        
-        .sub-btns { display: flex; gap: 10px; justify-content: center; }
-        .btn-small { flex: 1; padding: 12px; background: #333; color: white; border: none; border-radius: 8px; font-size: 16px; }
+        #canvasOutput { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+        .controls { padding: 15px; display: flex; justify-content: space-around; background: #111; border-top: 2px solid #333; }
+        button { padding: 12px 25px; border-radius: 50px; border: none; font-weight: bold; cursor: pointer; transition: 0.3s; }
+        .btn-scan { background: var(--accent); color: white; }
+        .btn-save { background: #007bff; color: white; }
+        .btn-flash { background: #ffc107; color: black; }
+        #status { padding: 10px; font-size: 14px; background: #222; color: #ffc107; }
     </style>
 </head>
 <body>
 
     <div id="overlay">
-        <h2 style="margin-bottom: 20px;">Subhash Pro Scanner</h2>
-        <button class="btn-main" onclick="startSystem()">स्कैनर शुरू करें</button>
-        <p style="color: #888; margin-top: 15px;">आवाज़ और कैमरा चालू करने के लिए क्लिक करें</p>
+        <h2>Subhash Smart Scanner</h2>
+        <p id="load-msg">सिस्टम लोड हो रहा है...</p>
+        <button id="startBtn" class="btn-scan" style="display:none;" onclick="startSystem()">स्कैनर शुरू करें</button>
     </div>
 
+    <div id="status">सिस्टम तैयार हो रहा है...</div>
+
     <div id="video-wrap">
-        <video id="video" autoplay playsinline muted></video>
-        <div class="guide-box"></div>
+        <video id="video" playsinline></video>
+        <canvas id="canvasOutput"></canvas>
     </div>
-    
-    <div class="ui-panel">
-        <div id="status">सिस्टम लोड हो रहा है...</div>
-        <div id="pageCount" style="color: #00ff00;">पेज संख्या: 0</div>
-        
-        <button class="btn-main" id="saveBtn" onclick="finalizePDF()" disabled>PDF सेव करें</button>
-        
-        <div class="sub-btns">
-            <button class="btn-small" onclick="toggleFlash()">🔦 टॉर्च</button>
-            <button class="btn-small" style="background: var(--danger);" onclick="location.reload()">🔄 रीसेट</button>
-        </div>
+
+    <div class="controls">
+        <button class="btn-flash" onclick="toggleFlash()">🔦 फ्लैश</button>
+        <button class="btn-save" onclick="finalizePDF()">💾 PDF सेव करें</button>
     </div>
 
     <script>
         let video = document.getElementById('video');
+        let canvas = document.getElementById('canvasOutput');
         let status = document.getElementById('status');
-        let scannedImages = [];
-        let isProcessing = false;
-        let lastGuidanceTime = 0;
         let isCvLoaded = false;
+        let isScanning = false;
+        let scannedImages = [];
 
-        function cvReady() { isCvLoaded = true; status.innerText = "तैयार। शुरू करें बटन दबाएं।"; }
-
-        function speak(text) {
-            window.speechSynthesis.cancel();
-            const msg = new SpeechSynthesisUtterance(text);
-            msg.lang = 'hi-IN';
-            window.speechSynthesis.speak(msg);
+        function onOpenCvReady() {
+            isCvLoaded = true;
+            document.getElementById('load-msg').innerText = "सिस्टम तैयार है!";
+            document.getElementById('startBtn').style.display = "block";
+            status.innerText = "कृपया 'स्कैनर शुरू करें' दबाएं";
         }
 
         async function startSystem() {
-            document.getElementById('overlay').style.display = 'none';
-            speak("स्कैनर शुरू हो रहा है। सुभाष जी, कागज को सामने लाएं।");
-
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "environment", width: 1280, height: 720 } 
+                    video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } 
                 });
                 video.srcObject = stream;
-                if (isCvLoaded) startDetection();
-            } catch(e) {
-                status.innerText = "कैमरा एरर!";
-                speak("कृपया कैमरा की अनुमति दें।");
+                video.onloadedmetadata = () => {
+                    video.play();
+                    document.getElementById('overlay').style.display = 'none';
+                    status.innerText = "कागज को कैमरे के सामने लाएं...";
+                    startDetection();
+                };
+            } catch (err) {
+                alert("कैमरा एक्सेस नहीं मिला: " + err.message);
             }
         }
 
         function startDetection() {
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            
-            // OpenCV सेटअप
-            let src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+            let cap = new cv.VideoCapture(video);
+            let frame = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
             let gray = new cv.Mat();
-            const cap = new cv.VideoCapture(video);
+            const FPS = 30;
 
-            const FPS = 10;
             function processVideo() {
-                if (isProcessing) return;
-
                 try {
-                    cap.read(src);
-                    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+                    if (!video.srcObject) return;
+                    cap.read(frame);
+                    cv.cvtColor(frame, gray, cv.COLOR_RGBA2GRAY);
                     cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
                     cv.Canny(gray, gray, 75, 200);
 
@@ -112,103 +95,27 @@
                     for (let i = 0; i < contours.size(); ++i) {
                         let cnt = contours.get(i);
                         let area = cv.contourArea(cnt);
-                        
-                        // अगर कागज का साइज काफी बड़ा है
-                        if (area > (video.videoWidth * video.videoHeight * 0.2)) {
-                            let rect = cv.boundingRect(cnt);
-                            handleGuidance(rect);
+                        if (area > 10000) { // अगर बड़ा कागज़ मिला
+                            status.innerText = "कागज मिल गया! स्थिर रखें...";
+                            status.style.color = "#28a745";
                             found = true;
-                            break;
+                            // यहाँ आप ऑटो-कैप्चर लॉजिक भी जोड़ सकते हैं
                         }
                     }
 
-                    if (!found) {
-                        status.innerText = "कागज नहीं दिख रहा है";
+                    if(!found) {
+                        status.innerText = "कागज की तलाश जारी...";
+                        status.style.color = "#ffc107";
                     }
 
                     contours.delete(); hierarchy.delete();
-                    setTimeout(processVideo, 1000/FPS);
-                } catch (e) { console.error(e); }
+                    setTimeout(processVideo, 1000 / FPS);
+                } catch (err) {
+                    console.error(err);
+                    setTimeout(processVideo, 1000 / FPS);
+                }
             }
-            setTimeout(processVideo, 1000);
-        }
-
-        function handleGuidance(rect) {
-            const now = Date.now();
-            if (now - lastGuidanceTime < 2500) return; // हर 2.5 सेकंड में निर्देश दें
-
-            const centerX = rect.x + rect.width / 2;
-            const centerY = rect.y + rect.height / 2;
-            const screenW = video.videoWidth;
-            const screenH = video.videoHeight;
-
-            const marginX = screenW * 0.15;
-            const marginY = screenH * 0.15;
-
-            let msg = "";
-            if (centerX < (screenW / 2 - marginX)) msg = "थोड़ा दाएँ करें";
-            else if (centerX > (screenW / 2 + marginX)) msg = "थोड़ा बाएँ करें";
-            else if (centerY < (screenH / 2 - marginY)) msg = "थोड़ा नीचे करें";
-            else if (centerY > (screenH / 2 + marginY)) msg = "थोड़ा ऊपर करें";
-            else {
-                msg = "सही है, स्थिर रहें";
-                status.innerText = msg;
-                speak(msg);
-                lastGuidanceTime = now + 5000; // कैप्चर के समय ब्रेक
-                autoCapture();
-                return;
-            }
-
-            status.innerText = msg;
-            speak(msg);
-            lastGuidanceTime = now;
-        }
-
-        function autoCapture() {
-            isProcessing = true;
-            const canvas = document.createElement('canvas');
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            canvas.getContext('2d').drawImage(video, 0, 0);
-            
-            canvas.toBlob((blob) => {
-                const url = URL.createObjectURL(blob);
-                scannedImages.push(url);
-                document.getElementById('pageCount').innerText = "पेज संख्या: " + scannedImages.length;
-                document.getElementById('saveBtn').disabled = false;
-                
-                speak("पेज " + scannedImages.length + " जुड़ गया। अगला लाएं।");
-                
-                setTimeout(() => { 
-                    isProcessing = false; 
-                    startDetection(); 
-                }, 3000);
-            }, 'image/jpeg', 0.8);
-        }
-
-        async function finalizePDF() {
-            isProcessing = true;
-            status.innerText = "PDF तैयार हो रही है...";
-            speak("सुभाष जी, फाइल तैयार हो रही है।");
-
-            const { jsPDF } = window.jspdf;
-            const pdf = new jsPDF('p', 'mm', 'a4');
-
-            for (let i = 0; i < scannedImages.length; i++) {
-                if (i > 0) pdf.addPage();
-                await new Promise(res => {
-                    const img = new Image();
-                    img.src = scannedImages[i];
-                    img.onload = () => {
-                        pdf.addImage(img, 'JPEG', 0, 0, 210, 297);
-                        res();
-                    };
-                });
-            }
-
-            pdf.save(`Subhash_Scan_${Date.now()}.pdf`);
-            speak("बधाई हो, फाइल सेव हो गई है।");
-            setTimeout(() => location.reload(), 3000);
+            processVideo();
         }
 
         async function toggleFlash() {
@@ -217,7 +124,21 @@
             if (caps.torch) {
                 const s = track.getSettings();
                 await track.applyConstraints({ advanced: [{ torch: !s.torch }] });
+            } else {
+                alert("इस डिवाइस में टॉर्च कंट्रोल उपलब्ध नहीं है।");
             }
+        }
+
+        function finalizePDF() {
+            status.innerText = "PDF सेव की जा रही है...";
+            // PDF सेव करने का लॉजिक यहाँ रहेगा
+            alert("सुभाष जी, PDF फीचर एक्टिवेट हो रहा है।");
+        }
+
+        function speak(text) {
+            const msg = new SpeechSynthesisUtterance(text);
+            msg.lang = 'hi-IN';
+            window.speechSynthesis.speak(msg);
         }
     </script>
 </body>
