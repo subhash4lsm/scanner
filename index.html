@@ -3,143 +3,155 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Subhash Pro Smart Scanner</title>
-    <script async src="https://docs.opencv.org/4.7.0/opencv.js" type="text/javascript" onload="onOpenCvReady();"></script>
+    <title>Subhash Vision Scanner Final</title>
+    <script async src="https://docs.opencv.org/4.7.0/opencv.js" onload="onOpenCvReady();"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <style>
-        :root { --accent: #28a745; --danger: #dc3545; }
-        body { font-family: 'Segoe UI', Arial, sans-serif; text-align: center; background: #000; color: #fff; margin: 0; overflow: hidden; }
-        #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-        #video-wrap { position: relative; width: 100%; height: 70vh; background: #222; overflow: hidden; }
-        #video { width: 100%; height: 100%; object-fit: cover; }
-        #canvasOutput { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
-        .controls { padding: 15px; display: flex; justify-content: space-around; background: #111; border-top: 2px solid #333; }
-        button { padding: 12px 25px; border-radius: 50px; border: none; font-weight: bold; cursor: pointer; transition: 0.3s; }
-        .btn-scan { background: var(--accent); color: white; }
-        .btn-save { background: #007bff; color: white; }
-        .btn-flash { background: #ffc107; color: black; }
-        #status { padding: 10px; font-size: 14px; background: #222; color: #ffc107; }
+        body { margin: 0; background: #000; color: #fff; font-family: sans-serif; text-align: center; overflow: hidden; }
+        .main-screen { height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        #startBtn { width: 90%; height: 70%; background: #28a745; color: white; font-size: 3rem; border: none; border-radius: 20px; font-weight: bold; cursor: pointer; display: none; }
+        #status { position: fixed; bottom: 0; width: 100%; padding: 20px; background: #222; color: #ffc107; font-size: 1.5rem; z-index: 10; }
+        video { width: 100%; height: 100%; object-fit: cover; display: none; }
     </style>
 </head>
 <body>
 
-    <div id="overlay">
-        <h2>Subhash Smart Scanner</h2>
-        <p id="load-msg">सिस्टम लोड हो रहा है...</p>
-        <button id="startBtn" class="btn-scan" style="display:none;" onclick="startSystem()">स्कैनर शुरू करें</button>
+    <div id="status">सिस्टम लोड हो रहा है...</div>
+
+    <div class="main-screen" id="ui">
+        <h1 id="title">सुभाष स्कैनर</h1>
+        <button id="startBtn" onclick="initScanner()">यहाँ टच करें <br> शुरू करें</button>
     </div>
 
-    <div id="status">सिस्टम तैयार हो रहा है...</div>
+    <video id="video" playsinline></video>
 
-    <div id="video-wrap">
-        <video id="video" playsinline></video>
-        <canvas id="canvasOutput"></canvas>
-    </div>
+<script>
+    let video = document.getElementById('video');
+    let statusMsg = document.getElementById('status');
+    let isCapturing = false;
+    let lastGuidance = "";
 
-    <div class="controls">
-        <button class="btn-flash" onclick="toggleFlash()">🔦 फ्लैश</button>
-        <button class="btn-save" onclick="finalizePDF()">💾 PDF सेव करें</button>
-    </div>
+    // आवाज़ वाला फंक्शन
+    function speak(text) {
+        if (lastGuidance === text) return; // बार-बार एक ही बात न बोले
+        lastGuidance = text;
+        window.speechSynthesis.cancel();
+        let msg = new SpeechSynthesisUtterance(text);
+        msg.lang = 'hi-IN';
+        window.speechSynthesis.speak(msg);
+    }
 
-    <script>
-        let video = document.getElementById('video');
-        let canvas = document.getElementById('canvasOutput');
-        let status = document.getElementById('status');
-        let isCvLoaded = false;
-        let isScanning = false;
-        let scannedImages = [];
+    // बीप साउंड
+    function beep(freq = 440, dur = 100) {
+        let ctx = new (window.AudioContext || window.webkitAudioContext)();
+        let osc = ctx.createOscillator();
+        let gain = ctx.createGain();
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.frequency.value = freq;
+        osc.start();
+        setTimeout(() => osc.stop(), dur);
+    }
 
-        function onOpenCvReady() {
-            isCvLoaded = true;
-            document.getElementById('load-msg').innerText = "सिस्टम तैयार है!";
-            document.getElementById('startBtn').style.display = "block";
-            status.innerText = "कृपया 'स्कैनर शुरू करें' दबाएं";
-        }
+    // सिस्टम लोड होने पर
+    function onOpenCvReady() {
+        document.getElementById('status').innerText = "तैयार है";
+        document.getElementById('startBtn').style.display = "block";
+        speak("सिस्टम तैयार है। सुभाष जी, स्क्रीन के बीच में बड़ा हरा बटन दबाएं।");
+    }
 
-        async function startSystem() {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } 
-                });
-                video.srcObject = stream;
-                video.onloadedmetadata = () => {
-                    video.play();
-                    document.getElementById('overlay').style.display = 'none';
-                    status.innerText = "कागज को कैमरे के सामने लाएं...";
-                    startDetection();
-                };
-            } catch (err) {
-                alert("कैमरा एक्सेस नहीं मिला: " + err.message);
+    // कैमरा शुरू करना
+    async function initScanner() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "environment", width: 1280, height: 720 } 
+            });
+            video.srcObject = stream;
+            video.play();
+            
+            document.getElementById('ui').style.display = 'none';
+            video.style.display = 'block';
+            statusMsg.innerText = "कागज की तलाश जारी...";
+            speak("कैमरा चालू हो गया है। अब कागज को धीरे-धीरे कैमरे के सामने लाएं।");
+            
+            // स्कैनिंग लूप शुरू
+            setInterval(analyzeFrame, 600);
+        } catch (err) {
+            if (err.name === "NotAllowedError") {
+                speak("कैमरा परमिशन नहीं मिली। कृपया ब्राउज़र सेटिंग्स में कैमरा चालू करें।");
+                alert("Settings > Site Settings > Camera में जाकर इसे Allow करें।");
+            } else {
+                speak("कैमरा शुरू करने में कोई और दिक्कत है।");
+                console.error(err);
             }
         }
+    }
 
-        function startDetection() {
-            let cap = new cv.VideoCapture(video);
-            let frame = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+    function analyzeFrame() {
+        if (isCapturing || !cv.imread) return;
+
+        try {
+            let canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+            let ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0);
+
+            let src = cv.imread(canvas);
             let gray = new cv.Mat();
-            const FPS = 30;
+            cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+            cv.Canny(gray, gray, 50, 150);
 
-            function processVideo() {
-                try {
-                    if (!video.srcObject) return;
-                    cap.read(frame);
-                    cv.cvtColor(frame, gray, cv.COLOR_RGBA2GRAY);
-                    cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
-                    cv.Canny(gray, gray, 75, 200);
+            let contours = new cv.MatVector();
+            let hierarchy = new cv.Mat();
+            cv.findContours(gray, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-                    let contours = new cv.MatVector();
-                    let hierarchy = new cv.Mat();
-                    cv.findContours(gray, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-                    let found = false;
-                    for (let i = 0; i < contours.size(); ++i) {
-                        let cnt = contours.get(i);
-                        let area = cv.contourArea(cnt);
-                        if (area > 10000) { // अगर बड़ा कागज़ मिला
-                            status.innerText = "कागज मिल गया! स्थिर रखें...";
-                            status.style.color = "#28a745";
-                            found = true;
-                            // यहाँ आप ऑटो-कैप्चर लॉजिक भी जोड़ सकते हैं
-                        }
-                    }
-
-                    if(!found) {
-                        status.innerText = "कागज की तलाश जारी...";
-                        status.style.color = "#ffc107";
-                    }
-
-                    contours.delete(); hierarchy.delete();
-                    setTimeout(processVideo, 1000 / FPS);
-                } catch (err) {
-                    console.error(err);
-                    setTimeout(processVideo, 1000 / FPS);
+            let maxArea = 0;
+            let bestContour = null;
+            for (let i = 0; i < contours.size(); ++i) {
+                let area = cv.contourArea(contours.get(i));
+                if (area > maxArea) {
+                    maxArea = area;
+                    bestContour = contours.get(i);
                 }
             }
-            processVideo();
-        }
 
-        async function toggleFlash() {
-            const track = video.srcObject.getVideoTracks()[0];
-            const caps = track.getCapabilities();
-            if (caps.torch) {
-                const s = track.getSettings();
-                await track.applyConstraints({ advanced: [{ torch: !s.torch }] });
-            } else {
-                alert("इस डिवाइस में टॉर्च कंट्रोल उपलब्ध नहीं है।");
+            if (bestContour && maxArea > 35000) {
+                let rect = cv.boundingRect(bestContour);
+                let centerX = rect.x + (rect.width / 2);
+                let imgW = video.videoWidth;
+
+                // मार्गदर्शन
+                if (maxArea < (imgW * video.videoHeight * 0.2)) {
+                    speak("कैमरा थोड़ा और पास लाएं");
+                } else if (centerX < (imgW * 0.3)) {
+                    speak("कैमरा बाएं घुमाएं");
+                } else if (centerX > (imgW * 0.7)) {
+                    speak("कैमरा दाएं घुमाएं");
+                } else {
+                    beep(600, 200);
+                    speak("बिल्कुल सही, स्थिर रखें");
+                    isCapturing = true;
+                    setTimeout(savePDF, 2500);
+                }
             }
-        }
 
-        function finalizePDF() {
-            status.innerText = "PDF सेव की जा रही है...";
-            // PDF सेव करने का लॉजिक यहाँ रहेगा
-            alert("सुभाष जी, PDF फीचर एक्टिवेट हो रहा है।");
-        }
+            src.delete(); gray.delete(); contours.delete(); hierarchy.delete();
+        } catch (e) { }
+    }
 
-        function speak(text) {
-            const msg = new SpeechSynthesisUtterance(text);
-            msg.lang = 'hi-IN';
-            window.speechSynthesis.speak(msg);
-        }
-    </script>
+    function savePDF() {
+        beep(800, 500);
+        const { jsPDF } = window.jspdf;
+        let canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0);
+        
+        let pdf = new jsPDF();
+        pdf.addImage(canvas.toDataURL('image/jpeg'), 'JPEG', 0, 0, 210, 297);
+        pdf.save("Subhash_Scan.pdf");
+        
+        speak("फोटो ले ली गई है। पी डी एफ फाइल सेव हो गई है। अगला पेज स्कैन करने के लिए तैयार रहें।");
+        setTimeout(() => { isCapturing = false; lastGuidance = ""; }, 5000);
+    }
+</script>
 </body>
 </html>
