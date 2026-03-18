@@ -3,13 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Subhash Vision Scanner Final</title>
+    <title>Subhash Vision Scanner Pro</title>
     <script async src="https://docs.opencv.org/4.7.0/opencv.js" onload="onOpenCvReady();"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <style>
         body { margin: 0; background: #000; color: #fff; font-family: sans-serif; text-align: center; overflow: hidden; }
         .main-screen { height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        /* बड़ा हरा बटन दृष्टिबाधितों के लिए */
         #startBtn { width: 90%; height: 70%; background: #28a745; color: white; font-size: 3rem; border: none; border-radius: 20px; font-weight: bold; cursor: pointer; display: none; }
+        /* पीडीएफ सेव करने का नीला बटन */
+        #savePdfBtn { position: fixed; bottom: 80px; width: 90%; height: 15%; background: #007bff; color: white; font-size: 2.5rem; border: none; border-radius: 20px; font-weight: bold; display: none; z-index: 20; left: 5%; }
         #status { position: fixed; bottom: 0; width: 100%; padding: 20px; background: #222; color: #ffc107; font-size: 1.5rem; z-index: 10; }
         video { width: 100%; height: 100%; object-fit: cover; display: none; }
     </style>
@@ -19,21 +22,25 @@
     <div id="status">सिस्टम लोड हो रहा है...</div>
 
     <div class="main-screen" id="ui">
-        <h1 id="title">सुभाष स्कैनर</h1>
+        <h1 id="title">सुभाष विजन स्कैनर</h1>
         <button id="startBtn" onclick="initScanner()">यहाँ टच करें <br> शुरू करें</button>
     </div>
 
     <video id="video" playsinline></video>
+    <button id="savePdfBtn" onclick="generateFinalPDF()">PDF सेव करें</button>
 
 <script>
     let video = document.getElementById('video');
     let statusMsg = document.getElementById('status');
+    let savePdfBtn = document.getElementById('savePdfBtn');
+    let scannedPages = [];
     let isCapturing = false;
     let lastGuidance = "";
+    let track = null; // टॉर्च के लिए
 
-    // आवाज़ वाला फंक्शन
+    // आवाज निर्देश फंक्शन
     function speak(text) {
-        if (lastGuidance === text) return; // बार-बार एक ही बात न बोले
+        if (lastGuidance === text) return;
         lastGuidance = text;
         window.speechSynthesis.cancel();
         let msg = new SpeechSynthesisUtterance(text);
@@ -41,7 +48,7 @@
         window.speechSynthesis.speak(msg);
     }
 
-    // बीप साउंड
+    // बीप साउंड फंक्शन
     function beep(freq = 440, dur = 100) {
         let ctx = new (window.AudioContext || window.webkitAudioContext)();
         let osc = ctx.createOscillator();
@@ -59,7 +66,7 @@
         speak("सिस्टम तैयार है। सुभाष जी, स्क्रीन के बीच में बड़ा हरा बटन दबाएं।");
     }
 
-    // कैमरा शुरू करना
+    // स्कैनर और लाइट शुरू करना
     async function initScanner() {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -68,30 +75,31 @@
             video.srcObject = stream;
             video.play();
             
+            // लाइट (Torch) चालू करना
+            track = stream.getVideoTracks()[0];
+            const capabilities = track.getCapabilities();
+            if (capabilities.torch) {
+                track.applyConstraints({ advanced: [{ torch: true }] });
+            }
+
             document.getElementById('ui').style.display = 'none';
             video.style.display = 'block';
             statusMsg.innerText = "कागज की तलाश जारी...";
-            speak("कैमरा चालू हो गया है। अब कागज को धीरे-धीरे कैमरे के सामने लाएं।");
+            speak("कैमरा और लाइट चालू हो गई है। अब कागज को धीरे-धीरे कैमरे के सामने लाएं।");
             
-            // स्कैनिंग लूप शुरू
             setInterval(analyzeFrame, 600);
         } catch (err) {
-            if (err.name === "NotAllowedError") {
-                speak("कैमरा परमिशन नहीं मिली। कृपया ब्राउज़र सेटिंग्स में कैमरा चालू करें।");
-                alert("Settings > Site Settings > Camera में जाकर इसे Allow करें।");
-            } else {
-                speak("कैमरा शुरू करने में कोई और दिक्कत है।");
-                console.error(err);
-            }
+            speak("कैमरा शुरू करने में दिक्कत है।");
         }
     }
 
+    // फ्रेम का विश्लेषण और गाइडेंस
     function analyzeFrame() {
         if (isCapturing || !cv.imread) return;
-
         try {
             let canvas = document.createElement('canvas');
-            canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+            canvas.width = video.videoWidth; 
+            canvas.height = video.videoHeight;
             let ctx = canvas.getContext('2d');
             ctx.drawImage(video, 0, 0);
 
@@ -108,49 +116,89 @@
             let bestContour = null;
             for (let i = 0; i < contours.size(); ++i) {
                 let area = cv.contourArea(contours.get(i));
-                if (area > maxArea) {
-                    maxArea = area;
-                    bestContour = contours.get(i);
-                }
+                if (area > maxArea) { maxArea = area; bestContour = contours.get(i); }
             }
 
-            if (bestContour && maxArea > 35000) {
+            // 25000 क्षेत्र की पहचान
+            if (bestContour && maxArea > 25000) { 
                 let rect = cv.boundingRect(bestContour);
-                let centerX = rect.x + (rect.width / 2);
                 let imgW = video.videoWidth;
-
-                // मार्गदर्शन
-                if (maxArea < (imgW * video.videoHeight * 0.2)) {
+                
+                // नया गाइडेंस लॉजिक (दूरी और दाएं-बाएं)
+                if (maxArea < (imgW * video.videoHeight * 0.1)) { 
                     speak("कैमरा थोड़ा और पास लाएं");
-                } else if (centerX < (imgW * 0.3)) {
-                    speak("कैमरा बाएं घुमाएं");
-                } else if (centerX > (imgW * 0.7)) {
-                    speak("कैमरा दाएं घुमाएं");
+                } else if (rect.x + rect.width > imgW * 0.95) {
+                    speak("कैमरा थोड़ा दाएं घुमाएं");
+                } else if (rect.x < imgW * 0.05) {
+                    speak("कैमरा थोड़ा बाएं घुमाएं");
                 } else {
+                    // स्थिति सही होने पर
                     beep(600, 200);
                     speak("बिल्कुल सही, स्थिर रखें");
                     isCapturing = true;
-                    setTimeout(savePDF, 2500);
+                    // 2 सेकंड का इंतजार ताकि हाथ स्थिर रहे
+                    setTimeout(() => capturePage(bestContour), 2000); 
                 }
             }
-
             src.delete(); gray.delete(); contours.delete(); hierarchy.delete();
         } catch (e) { }
     }
 
-    function savePDF() {
+    // फोटो कैप्चर और क्रॉपिंग फंक्शन
+    function capturePage(contour) {
         beep(800, 500);
-        const { jsPDF } = window.jspdf;
+        let rect = cv.boundingRect(contour);
+        
+        // केवल कागज के लिए कैनवास
         let canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-        canvas.getContext('2d').drawImage(video, 0, 0);
+        canvas.width = rect.width; 
+        canvas.height = rect.height;
         
-        let pdf = new jsPDF();
-        pdf.addImage(canvas.toDataURL('image/jpeg'), 'JPEG', 0, 0, 210, 297);
-        pdf.save("Subhash_Scan.pdf");
+        // पूरे फ्रेम का कैनवास
+        let fullCanvas = document.createElement('canvas');
+        fullCanvas.width = video.videoWidth; 
+        fullCanvas.height = video.videoHeight;
+        fullCanvas.getContext('2d').drawImage(video, 0, 0);
         
-        speak("फोटो ले ली गई है। पी डी एफ फाइल सेव हो गई है। अगला पेज स्कैन करने के लिए तैयार रहें।");
-        setTimeout(() => { isCapturing = false; lastGuidance = ""; }, 5000);
+        // केवल कागज के हिस्से को काटना (Cropping)
+        canvas.getContext('2d').drawImage(fullCanvas, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
+        
+        let imgData = canvas.toDataURL('image/jpeg', 0.8);
+        scannedPages.push(imgData); // मेमोरी में सेव
+        
+        savePdfBtn.style.display = "block";
+        speak("पेज नंबर " + scannedPages.length + " स्कैन हो गया। अगला पन्ना लाएं या नीचे से सेव करें।");
+        
+        // 4 सेकंड का ब्रेक पन्ना बदलने के लिए
+        setTimeout(() => { isCapturing = false; lastGuidance = ""; }, 4000);
+    }
+
+    // PDF बनाना और लाइट बंद करना
+    function generateFinalPDF() {
+        if (scannedPages.length === 0) return;
+        
+        // लाइट (Torch) बंद करना
+        if (track) {
+            track.applyConstraints({ advanced: [{ torch: false }] });
+        }
+
+        speak("पन्ने जोड़े जा रहे हैं और लाइट बंद कर दी गई है।");
+        const { jsPDF } = window.jspdf;
+        let pdf = new jsPDF('p', 'mm', 'a4');
+
+        for (let i = 0; i < scannedPages.length; i++) {
+            if (i > 0) pdf.addPage();
+            // A4 साइज में फोटो फिट करना
+            pdf.addImage(scannedPages[i], 'JPEG', 0, 0, 210, 297);
+        }
+
+        // फाइल सेव करना
+        pdf.save("Document_Scan.pdf");
+        speak("आपकी " + scannedPages.length + " पन्नों की पीडीएफ फाइल सुरक्षित सेव हो गई है।");
+        
+        // रिसेट करें
+        scannedPages = [];
+        savePdfBtn.style.display = "none";
     }
 </script>
 </body>
